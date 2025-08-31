@@ -2,13 +2,15 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
 const venom = require("venom-bot");
+const QRCode = require("qrcode");
+require("dotenv").config();
+
 const fetch = (...args) =>
   import("node-fetch").then(({ default: f }) => f(...args));
 
-const APP_PORT = process.env.PORT || 3000;
-const SHARED_TOKEN = process.env.BRIDGE_TOKEN || "troque-isto";
-const INCOMING_WEBHOOK =
-  process.env.INCOMING_WEBHOOK || "http://localhost/whatsapp/webhook.php";
+const APP_PORT = process.env.PORT;
+const SHARED_TOKEN = process.env.BRIDGE_TOKEN;
+const INCOMING_WEBHOOK = process.env.INCOMING_WEBHOOK;
 
 const app = express();
 app.use(cors());
@@ -77,6 +79,48 @@ app.post("/send-media", auth, async (req, res) => {
     res.json({ status: "sent", result: r });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/send-pix", auth, async (req, res) => {
+  try {
+    const { to, pixPayload, caption, filename } = req.body;
+    if (!to || !pixPayload) {
+      return res
+        .status(400)
+        .json({ error: "campos obrigatórios: to, pixPayload" });
+    }
+
+    // 1) Gera DataURL base64 do QR (PNG)
+    const dataUrl = await QRCode.toDataURL(pixPayload, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      scale: 8,
+    });
+    // dataUrl vem como: "data:image/png;base64,AAAA..."
+
+    const jid = normaliza(to);
+    const name = filename || "qrcode-pagamento.png";
+
+    const defaultCaption =
+      "*Pagamento pendente* 💳\n\n" +
+      "Escaneie o QR Code acima ou copie o PIX abaixo:\n" +
+      "```" +
+      pixPayload +
+      "```";
+
+    // 2) Envia usando **sendFileFromBase64** (aceita Data URL)
+    const r = await client.sendFileFromBase64(
+      jid,
+      dataUrl, // <- Data URL (com prefixo data:image/png;base64,)
+      name,
+      caption || defaultCaption
+    );
+
+    res.json({ status: "sent", result: r });
+  } catch (e) {
+    console.error("[send-pix] Erro:", e && e.stack ? e.stack : e);
+    res.status(500).json({ error: e.message || "internal error" });
   }
 });
 
